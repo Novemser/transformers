@@ -79,6 +79,22 @@ def prune_by_weight_importances(
         
         return (weight * mask).view(original_size), 100 * (mask.bool().sum().cpu().item()) / topk
 
+def prune_by_weight_importances_based_on_threshold(
+        weight: torch.tensor,
+        weight_importances: list[torch.tensor],
+        threshold_percentage) -> torch.tensor:
+    with torch.no_grad():
+        original_size = weight.size()
+        # flatten the weight mask/weight_importance matrix for easier processing
+        weight = weight.view(-1,)
+        mask = torch.ones_like(weight)
+        for weight_importance in weight_importances:
+            weight_importance = weight_importance.view(-1,)
+            threshold = weight_importance.max() * threshold_percentage
+            preserved_weights = weight_importance > threshold
+            mask *= preserved_weights
+        
+        return (weight * mask).view(original_size), 100 * (mask.bool().sum().cpu().item()) / mask.numel()
 
 def prune_by_column_importances(
         weight: torch.tensor, 
@@ -90,6 +106,7 @@ def prune_by_column_importances(
 
 PRUNING_FUNC_MAP = {
     'weight': prune_by_weight_importances,
+    'weight_threshold': prune_by_weight_importances_based_on_threshold,
     'column': prune_by_column_importances
 }
 task_names = ['copa', 'lambada_openai', 'piqa', 'mmlu', 'gsm8k', 'arc_challenge']
