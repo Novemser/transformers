@@ -381,6 +381,7 @@ class PretrainedConfig(PushToHubMixin):
         self.sparsity_ratio = kwargs.pop("sparsity_ratio", 1.0)
         self.task_angostic_pruning = kwargs.pop("task_angostic_pruning", False)
         self.analyze_layer_norm_affect = kwargs.pop("analyze_layer_norm_affect", False)
+        self.record_mlp_activation = kwargs.pop("record_mlp_activation", False)
 
     @property
     def name_or_path(self) -> str:

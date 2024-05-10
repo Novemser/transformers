@@ -7,12 +7,13 @@ class WrapperLayer:
     This class wraps a GPT layer for specific operations.
     """
 
-    def __init__(self, layer, layer_id=0, layer_name="none"):
+    def __init__(self, layer, layer_id=0, layer_name="none", layer_contains_parameters=False):
         assert layer != None
         self.layer = layer
-        self.dev = self.layer.weight.device
-        self.rows = layer.weight.data.shape[0]
-        self.columns = layer.weight.data.shape[1] if len(layer.weight.data.shape) > 1 else None
+        if layer_contains_parameters:
+            self.dev = self.layer.weight.device
+            self.rows = layer.weight.data.shape[0]
+            self.columns = layer.weight.data.shape[1] if len(layer.weight.data.shape) > 1 else None
 
         # number of features of the input=self.columns
         self.scaler_row = None
@@ -22,10 +23,19 @@ class WrapperLayer:
         self.layer_name = layer_name
         self.layer_activation = None
         self.sims = []
+        self.records = None
         
-    def record_in_out(self, input_X: torch.Tensor, output_X: torch.Tensor):
-        assert input_X.shape == output_X.shape
-        self.sims.append(F.cosine_similarity(input_X, output_X).mean())
+    def record_in_out(self, input_X: torch.Tensor, output_X: torch.Tensor, agg_type: str = 'similarity'):
+        if agg_type == 'similarity':
+            assert input_X.shape == output_X.shape
+            self.sims.append(F.cosine_similarity(input_X, output_X).mean())
+        elif agg_type == 'record':
+            bsz, seqlen, intermediate_size = output_X.shape
+            activations = output_X.reshape(-1, intermediate_size).half().cpu()
+            if self.records is None:
+                self.records = activations
+                return
+            self.records = torch.cat((self.records, activations), dim=0)
 
     def add_batch(self, input_X: torch.Tensor, output_X: torch.Tensor):
         if self.scaler_row is None:
