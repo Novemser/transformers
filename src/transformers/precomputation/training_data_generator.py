@@ -22,15 +22,16 @@ def generate_act_hats_llama2(
     num_labels = record_act_result.shape[0]
     print(f"num_labels: {num_labels}")
     output = None
-    denominator = torch.matmul(up_proj, down_proj)
+    denominator = torch.matmul(up_proj, down_proj).float() + 1e-8
     part_index = 0
     with torch.no_grad():
         for lable_id in tqdm(range(num_labels), desc="Processing samples (batch size=1):"):
             activation = record_act_result[lable_id].to(device=up_proj.device)
             assert activation.shape[0] == d_intermediate, "Unexpected recorded activation shape!"
             # calculate a_hat_i_j
-            numerator = torch.matmul(activation * up_proj, down_proj)
-            a_hat_i_j = (numerator / denominator)
+            numerator = torch.matmul(activation * up_proj, down_proj).float()
+            a_hat_i_j = (numerator / denominator).half()
+            assert a_hat_i_j.isnan().sum() == 0
             if output == None:
                 output = a_hat_i_j
             else:
