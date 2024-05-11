@@ -19,20 +19,16 @@ def generate_act_hats_llama2(
     num_labels = record_act_result.shape[0]
     print(f"num_labels: {num_labels}")
     output = None
-    for lable_id in tqdm(range(num_labels), desc="Processing samples:"):
-        activation = record_act_result[lable_id].to(device=up_proj.device)
-        assert activation.shape[0] == d_intermediate, "Unexpected recorded activation shape!"
-        # calculate a_hat_i_j
-        for i_index in tqdm(range(d_model), desc="Processing i_index"):
-            for j_index in tqdm(range(d_model), desc="Processing j_index"):
-                u_jth_row = up_proj[j_index, :]#.unsqueeze(0)
-                o_ith_col = down_proj[:, i_index]#.unsqueeze(1)
-                mul = u_jth_row * o_ith_col
-                c_ij = mul.sum()
-                numerator = (activation * mul).sum()
-                a_hat_i_j = (numerator / c_ij).unsqueeze(-1)
-                if output == None:
-                    output = a_hat_i_j
-                else:
-                    output = torch.cat((output, a_hat_i_j), dim=0)
-    return output.reshape(num_labels, d_model, d_model)
+    denominator = torch.matmul(up_proj, down_proj)
+    with torch.no_grad():
+        for lable_id in tqdm(range(num_labels), desc="Processing samples (batch size=1):"):
+            activation = record_act_result[lable_id].to(device=up_proj.device)
+            assert activation.shape[0] == d_intermediate, "Unexpected recorded activation shape!"
+            # calculate a_hat_i_j
+            numerator = torch.matmul(activation * up_proj, down_proj)
+            a_hat_i_j = (numerator / denominator)
+            if output == None:
+                output = a_hat_i_j
+            else:
+                output = torch.cat((output, a_hat_i_j), dim=0)
+        return output.reshape(num_labels, d_model, d_model)
