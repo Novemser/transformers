@@ -14,10 +14,11 @@ def generate_act_hats_llama2(
     record_act_result: torch.Tensor,
     up_proj: torch.Tensor, 
     down_proj: torch.Tensor,
-    num_samples_per_file: int,
-    activation_recorded_res_path: str,
-    file_name_prefix: str,
-    max_samples: int=500):
+    num_samples_per_file: int='100',
+    activation_recorded_res_path: str='./',
+    file_name_prefix: str='labels',
+    max_samples: int=500,
+    save_result: bool=True):
     record_act_result = record_act_result.reshape(-1, d_intermediate)
     num_labels = record_act_result.shape[0]
     print(f"num_labels: {num_labels}")
@@ -38,9 +39,12 @@ def generate_act_hats_llama2(
                 output = torch.cat((output, a_hat_i_j), dim=0)
                 if (output.shape[0] / d_model) >= num_samples_per_file:
                     # save partial result
-                    torch.save(output.half().reshape(num_samples_per_file, d_model, d_model), os.path.join(
-                        activation_recorded_res_path, 
-                        f"{file_name_prefix}_part_{part_index}.pt"))
+                    if save_result:
+                        torch.save(output.half().reshape(num_samples_per_file, d_model * d_model), os.path.join(
+                            activation_recorded_res_path, 
+                            f"{file_name_prefix}_part_{part_index}.pt"))
+                    else:
+                        print(output)
                     output = None
                     part_index += 1
                 if max_samples <= (num_samples_per_file * part_index):
@@ -48,6 +52,9 @@ def generate_act_hats_llama2(
                     return
 
         if output != None:
-            torch.save(output.half().reshape(part_index % num_samples_per_file + 1, d_model, d_model), os.path.join(
-                activation_recorded_res_path, 
-                f"{file_name_prefix}_part_{part_index}.pt"))
+            if save_result:
+                torch.save(output.half().reshape(part_index % num_samples_per_file + 1, d_model * d_model), os.path.join(
+                    activation_recorded_res_path, 
+                    f"{file_name_prefix}_part_{part_index}.pt"))
+            else:
+                print(output)
