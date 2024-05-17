@@ -29,13 +29,20 @@ class WrapperLayer:
         if agg_type == 'similarity':
             assert input_X.shape == output_X.shape
             self.sims.append(F.cosine_similarity(input_X, output_X).mean())
-        elif agg_type == 'record':
+        elif agg_type == 'record_output':
             bsz, seqlen, intermediate_size = output_X.shape
-            activations = output_X.reshape(-1, intermediate_size).half().cpu()
+            result = output_X.reshape(-1, intermediate_size).half().cpu()
             if self.records is None:
-                self.records = activations
+                self.records = result
                 return
-            self.records = torch.cat((self.records, activations), dim=0)
+            self.records = torch.cat((self.records, result), dim=0)
+        elif agg_type == 'record_input':
+            bsz, seqlen, intermediate_size = input_X.shape
+            result = input_X.reshape(-1, intermediate_size).half().cpu()
+            if self.records is None:
+                self.records = result
+                return
+            self.records = torch.cat((self.records, result), dim=0)
 
     def add_batch(self, input_X: torch.Tensor, output_X: torch.Tensor):
         if self.scaler_row is None:

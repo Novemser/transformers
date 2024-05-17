@@ -26,6 +26,7 @@ class PruneMetadata:
         self.num_weights_pruned = 0
         self.analyze_layer_norm_affect = config.analyze_layer_norm_affect
         self.record_mlp_activation = config.record_mlp_activation
+        self.record_mlp_input = config.record_mlp_input
 
     def set_instrumented_layers(self, layers):
         self.layers = layers
@@ -38,6 +39,9 @@ class PruneMetadata:
                 subset = find_layers(layer, layers=[LlamaRMSNorm])
             elif self.record_mlp_activation:
                 subset = find_layers(layer, layers=[nn.SiLU])
+            elif self.record_mlp_input:
+                from transformers.models.llama.modeling_llama import LlamaMLP
+                subset = find_layers(layer, layers=[LlamaMLP])
             else:
                 subset = find_layers(layer)
         
@@ -88,12 +92,23 @@ class PruneMetadata:
                     def record_in_out(layer_id, name, wrapper_layer):
                         def tmp(_, inputs, output):
                             # print('[DEBUG-0]layer_id:{}, layer_name:{}'.format(layer_id, name))
-                            wrapper_layer.record_in_out(inputs[0].data, output.data, agg_type='record')
+                            wrapper_layer.record_in_out(inputs[0].data, output.data, agg_type='record_output')
                             # print('[DEBUG-1]layer_id:{}, layer_name:{}'.format(layer_id, name))
                         return tmp
                     self.handles.append(module.register_forward_hook(
                         record_in_out(id, name, wrapper_layer)
                     ))
+                elif self.record_mlp_input:
+                    def record_in_out(layer_id, name, wrapper_layer):
+                        def tmp(_, inputs, output):
+                            # print('[DEBUG-0]layer_id:{}, layer_name:{}'.format(layer_id, name))
+                            wrapper_layer.record_in_out(inputs[0].data, output.data, agg_type='record_input')
+                            # print('[DEBUG-1]layer_id:{}, layer_name:{}'.format(layer_id, name))
+                        return tmp
+                    self.handles.append(module.register_forward_hook(
+                        record_in_out(id, name, wrapper_layer)
+                    ))
+
 
     def create_wrapper_layer(self, layer, layer_id, layer_name):
         return WrapperLayer(layer, layer_id, layer_name)
@@ -123,7 +138,7 @@ class PruneMetadata:
 
     def print_statistics(self, save_weight_importance=True):
         logger.warn("[Statistics] Instrumented layers:")
-        if self.record_weight_wise_activation or self.analyze_layer_norm_affect or self.record_mlp_activation:
+        if self.record_weight_wise_activation or self.analyze_layer_norm_affect or self.record_mlp_activation or self.record_mlp_input:
             for id, wrapper_layers in enumerate(self.all_wrapper_layers):
                 logger.warn(f" layer_id:{id}")
                 for name, wrapper_layer in wrapper_layers.items():
@@ -135,6 +150,12 @@ class PruneMetadata:
                         continue
                     elif self.record_mlp_activation:
                         filename = f"{id}_{name}_mlp_activation_res.pt"
+                        if not os.path.exists(self.output_path):
+                            os.makedirs(self.output_path)
+                        torch.save(wrapper_layer.records, os.path.join(self.output_path, filename))
+                        continue
+                    elif self.record_mlp_input:
+                        filename = f"{id}_{name}_mlp_input_res.pt"
                         if not os.path.exists(self.output_path):
                             os.makedirs(self.output_path)
                         torch.save(wrapper_layer.records, os.path.join(self.output_path, filename))

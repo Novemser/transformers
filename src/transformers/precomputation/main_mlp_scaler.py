@@ -1,3 +1,4 @@
+import os
 import torch
 import numpy as np
 import argparse
@@ -16,12 +17,11 @@ MODEL_CHOICES = ['7b']
 DATA_CHOICES = ['piqa']
 CONFIG = {
     '7b':{
-        'num_layer': 95,
+        'num_layer': 32,
         'd_model': 4096,
         'intermediate': 11008,
-        'layers': 32,
-        'samples_to_learn': 100,
-        'samples_per_file': 100
+        'samples_to_learn': 50000,
+        'samples_per_file': 50000
     }
 }
 
@@ -50,12 +50,20 @@ class BasicDataset(Dataset):
 def get_data(args, layer_num):
     path = f"{DATA[args.model][args.dataset]}/{layer_num}_mlp.act_fn_mlp_activation_res.pt"
     print(f"Reading query from {path}")
-    query = torch.load(path)[:CONFIG[args.model]['samples_to_learn']]
+    num_samples = CONFIG[args.model]['samples_to_learn']
+    query = torch.load(path)[:num_samples]
+    path = f"{DATA[args.model][args.dataset]}/{layer_num}_mlp_mlp_input_res.pt"
+    query = torch.cat((query, torch.load(path)[:num_samples]), dim=1)
+    label = None
 
-    for part_index in range(CONFIG[args.model]['samples_to_learn'] // CONFIG[args.model]['samples_per_file']):
+    for part_index in range(num_samples // CONFIG[args.model]['samples_per_file']):
         path = f"{DATA[args.model][args.dataset]}/{layer_num}_mlp.act_fn_mlp_activation_res_labels_part_{part_index}.pt"
         print(f"Reading MLP label {part_index} from {path}")
-        label = torch.load(path)
+        labels = torch.load(path)
+        if label == None:
+            label = labels
+        else:
+            label = torch.cat((label, labels), dim=0)
     return query, label
 
 def create_dataset(query, labels, args):
@@ -90,19 +98,19 @@ def main():
     parser.add_argument(
         "--D",
         type=int,
-        default=1,
+        default=7000,
         help="low rank dimension",
     )
     parser.add_argument(
         "--batch_size",
         type=int,
-        default=1,
+        default=48,
         help="batch size",
     )
     parser.add_argument(
         "--epochs",
         type=int,
-        default=20,
+        default=20000000,
         help="epochs",
     )
     parser.add_argument(
@@ -127,8 +135,10 @@ def main():
     train_loader, test_loader = create_dataset(query, labels, args)
 
     query_layer = torch.nn.Sequential(
-        torch.nn.Linear(CONFIG[args.model]['intermediate'], args.D, bias=None), # intermediate * D
-        torch.nn.Linear(args.D, CONFIG[args.model]['d_model'] ** 2, bias=None), # D * d_model^2
+        torch.nn.Linear(CONFIG[args.model]['intermediate'] + CONFIG[args.model]['d_model'], 
+                        args.D, bias=None, dtype=torch.float32), # (intermediate + d_model) * D
+        torch.nn.SiLU(),
+        torch.nn.Linear(args.D, CONFIG[args.model]['d_model'], bias=None, dtype=torch.float32), # D * d_model
     )
 
     print("Start Training")
@@ -136,8 +146,11 @@ def main():
         query_layer,  train_loader, test_loader, args, device, verbal=True
     )
 
-    path = f"/root/autodl-tmp/predictors/llama2-{args.model}-scaler-predictor/{args.dataset}_layer{args.L}.pt"
-    torch.save(best_model, path)
+    dir = f"/root/autodl-tmp/predictors/llama2-{args.model}-scaler-predictor"
+    file = f"{args.dataset}_layer{args.L}.pt"
+    if not os.path.exists(dir):
+        os.mkdirs(dir)
+    torch.save(best_model, os.path.join(dir, file))
 
 if __name__ == "__main__":
     main()

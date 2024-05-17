@@ -14,33 +14,41 @@ def generate_act_hats_llama2(
     record_act_result: torch.Tensor,
     up_proj: torch.Tensor, 
     down_proj: torch.Tensor,
-    num_samples_per_file: int='100',
+    record_input_result: torch.Tensor,
+    num_samples_per_file: int=100,
     activation_recorded_res_path: str='./',
     file_name_prefix: str='labels',
     max_samples: int=500,
     save_result: bool=True):
     record_act_result = record_act_result.reshape(-1, d_intermediate)
+    record_input_result = record_input_result.reshape(-1, d_model)
     num_labels = record_act_result.shape[0]
     print(f"num_labels: {num_labels}")
     output = None
-    denominator = torch.matmul(up_proj, down_proj).float() + 1e-8
+    C = torch.matmul(up_proj, down_proj).float().transpose(0, 1) + 1e-8 # The C matrix, D * D
     part_index = 0
     with torch.no_grad():
         for lable_id in tqdm(range(num_labels), desc="Processing samples (batch size=1):"):
-            activation = record_act_result[lable_id].to(device=up_proj.device)
+            activation = record_act_result[lable_id].to(device=up_proj.device) # 1 * I
+            record_input = record_input_result[lable_id].to(device=up_proj.device) # 1 * D
             assert activation.shape[0] == d_intermediate, "Unexpected recorded activation shape!"
-            # calculate a_hat_i_j
-            numerator = torch.matmul(activation * up_proj, down_proj).float()
-            a_hat_i_j = (numerator / denominator).half()
-            assert a_hat_i_j.isnan().sum() == 0
+            assert record_input.shape[0] == d_model, "Unexpected recorded record_input shape!"
+            # calculate a_hat
+            AUO = torch.matmul(activation * up_proj, down_proj).float().transpose(0, 1) # D * D
+            a_hat = (AUO / C) # D * D
+            XC = (record_input.float() * C.transpose(0, 1)).sum(dim=1) # The X*C matrix, 1 * D
+            Xa_hatC = (record_input.float() * a_hat.float() * C).sum(dim=1) # 1 * D
+            a_hat_hat = Xa_hatC / XC # 1 * D
+            
+            assert a_hat_hat.isnan().sum() == 0
             if output == None:
-                output = a_hat_i_j
+                output = a_hat_hat
             else:
-                output = torch.cat((output, a_hat_i_j), dim=0)
+                output = torch.cat((output, a_hat_hat), dim=0)
                 if (output.shape[0] / d_model) >= num_samples_per_file:
                     # save partial result
                     if save_result:
-                        torch.save(output.half().reshape(num_samples_per_file, d_model * d_model), os.path.join(
+                        torch.save(output.reshape(num_samples_per_file, d_model), os.path.join(
                             activation_recorded_res_path, 
                             f"{file_name_prefix}_part_{part_index}.pt"))
                     else:
@@ -53,8 +61,7 @@ def generate_act_hats_llama2(
 
         if output != None:
             if save_result:
-                torch.save(output.half().reshape(part_index % num_samples_per_file + 1, d_model * d_model), os.path.join(
-                    activation_recorded_res_path, 
-                    f"{file_name_prefix}_part_{part_index}.pt"))
+                torch.save(output.reshape(-1, d_model), 
+                           os.path.join(activation_recorded_res_path, f"{file_name_prefix}_part_{part_index}.pt"))
             else:
                 print(output)

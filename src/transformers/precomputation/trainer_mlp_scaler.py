@@ -3,6 +3,7 @@ import copy
 import numpy as np
 from tqdm import tqdm
 from torch import nn
+from torch.utils.tensorboard import SummaryWriter
 
 def eval_print(validation_results):
     result = ""
@@ -26,8 +27,8 @@ def evaluate(model, device, loader, args, smalltest=False, loss_fn=nn.MSELoss())
     with torch.no_grad():
         for batch_idx, batch in enumerate((loader)):
             x, y = batch
-            bsz, shape_horizental, shape_vertical = y.shape
-            y = y.float().to(device)
+            y = y.to(device).nan_to_num(nan=0.0, posinf=100.0, neginf=-100.0)
+            assert y.isnan().sum() == 0 and y.isinf().sum() == 0
             y_pred = model(x.float().to(device))
 
             eval["Loss"] += [
@@ -43,6 +44,8 @@ def evaluate(model, device, loader, args, smalltest=False, loss_fn=nn.MSELoss())
 
 
 def train(model, train_loader, valid_loader, args, device, verbal=True):
+    writer = SummaryWriter()
+    
     num_val = 0
     early_stop_waiting = 5
     val_inter = len(train_loader) // (num_val + 1) + 1
@@ -67,8 +70,9 @@ def train(model, train_loader, valid_loader, args, device, verbal=True):
             x, y = batch
             optimizer.zero_grad()
 
-            bsz, shape_horizental, shape_vertical = y.shape
-            y = y.float().to(device)
+            # not sure if this is correct
+            y = y.to(device).nan_to_num(nan=0.0, posinf=100.0, neginf=-100.0)
+            assert y.isnan().sum() == 0 and y.isinf().sum() == 0
             y_pred = model(x.float().to(device))
             loss = loss_fn(y_pred, y)
             loss.backward()
@@ -81,6 +85,9 @@ def train(model, train_loader, valid_loader, args, device, verbal=True):
         if verbal:
             print(f"[Epoch {e+1}] [Train] {eval_print(train_eval_results)}")
             print(f"[Epoch {e+1}] [Valid] {eval_print(epoch_eval_results)}\n")
+        writer.add_scalar("Loss/train", train_eval_results["Loss"], e)
+        writer.add_scalar("Loss/eval", epoch_eval_results["Loss"], e)
+        writer.flush()
 
         # if epoch_eval_results["Recall"] > base_acc:
         #     base_acc = epoch_eval_results["Recall"]
@@ -94,5 +101,5 @@ def train(model, train_loader, valid_loader, args, device, verbal=True):
 
         # if no_improve >= early_stop_waiting or base_acc > 0.99:
         #     break
-
+    writer.close()
     return best_model, best_eval
