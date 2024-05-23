@@ -927,6 +927,24 @@ class LlamaModel(LlamaPreTrainedModel):
         self.layers = nn.ModuleList(
             [LlamaDecoderLayer(config, layer_idx) for layer_idx in range(config.num_hidden_layers)]
         )
+        class act_linear(nn.Module):
+            def forward(self, input: torch.Tensor) -> torch.Tensor:
+                range_min = -0.5
+                range_max = 0.5
+                r1 = input <= range_max
+                r2 = input >= range_min
+                
+                r3 = input > range_max
+                r4 = input < range_min
+                
+                return (input * (r1 * r2)) * 0.5238 + nn.SiLU()(input * (r3 + r4))
+                
+                # return 0.5238 * input if input > -0.5 and input < 0.5 else nn.SiLU()(input)
+        for layer in self.layers:
+            layer.mlp.act_fn = act_linear()
+            
+        # self.layers[0].mlp.act_fn = act_linear()
+
         self.norm = LlamaRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         self.gradient_checkpointing = False
 

@@ -11,13 +11,6 @@ def eval_print(validation_results):
         result = f"{result}{metric_name}: {metirc_val:.4f} "
     return result
 
-
-def generate_label(y):
-    # positive
-    one_hot = (y > 0).to(y.dtype)
-    return one_hot
-
-
 def evaluate(model, device, loader, args, smalltest=False, loss_fn=nn.MSELoss()):
     model.eval()
 
@@ -60,7 +53,7 @@ def train(model, train_loader, valid_loader, args, device, verbal=True):
     if verbal:
         print(f"[Start] {eval_print(eval_results)}")
 
-    best_model = copy.deepcopy(model.state_dict())
+    # best_model = copy.deepcopy(model.state_dict())
     # base_acc = eval_results["Recall"]
     best_eval = eval_results
     no_improve = 0
@@ -102,4 +95,4 @@ def train(model, train_loader, valid_loader, args, device, verbal=True):
         # if no_improve >= early_stop_waiting or base_acc > 0.99:
         #     break
     writer.close()
-    return best_model, best_eval
+    return copy.deepcopy(model.state_dict()), best_eval

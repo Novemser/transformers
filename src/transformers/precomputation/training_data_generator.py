@@ -8,6 +8,44 @@ import torch.nn as nn
 def P_i_j_k(i_index: int, j_index: int, k_index: int, up_proj: torch.Tensor, down_proj: torch.Tensor):
     return up_proj[j_index][k_index] * down_proj[k_index][i_index]
 
+def generate_x_hats_llama2(
+    d_model: int, 
+    gate_proj: torch.Tensor, 
+    up_proj: torch.Tensor, 
+    down_proj: torch.Tensor,
+    record_inputs: torch.Tensor,
+    save_result: bool=True,
+    batch_size: int=10):
+    H = gate_proj * up_proj
+    V = torch.mm(H, down_proj)
+    
+    x_squared_coefficients = V.diag()
+
+    # 非对角线元素给出交叉项系数
+    cross_terms_sum = 0
+    # cross_terms_coefficients = {}
+    for i in tqdm(range(d_model), desc="Processing cross_terms_coefficients"):
+        for j in range(i + 1, d_model):
+            coefficient = V[i, j] + V[j, i]
+            # cross_terms_coefficients[f'x{i+1}x{j+1}'] = coefficient
+            cross_terms_sum += coefficient
+    
+    record_inputs = record_inputs.reshape(-1, batch_size, d_model).cuda()
+    res = None
+    with torch.no_grad():
+        for batch in tqdm(record_inputs):
+            assert batch.shape == torch.Size((batch_size, d_model))
+            output_actual = torch.mm(torch.mm(batch, gate_proj) * torch.mm(batch, up_proj), down_proj)
+            # 减去平方项的和
+            output_actual -= torch.mm(batch * batch, x_squared_coefficients.unsqueeze(1))
+            label = output_actual / cross_terms_sum
+            assert label.shape == torch.Size((batch_size, d_model))
+            if save_result and res == None:
+                res = label
+            elif res != None:
+                res = torch.cat((res, label), dim=0)
+    return res
+
 def generate_act_hats_llama2(
     d_model: int, 
     d_intermediate: int, 
