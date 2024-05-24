@@ -51,9 +51,9 @@ def load_recorded_input_data(path: str, layer_idx: str) -> torch.Tensor:
     return torch.load(os.path.join(path, f"{layer_idx}_mlp_mlp_input_res.pt"))
 
 def load_recorded_label_data(path: str, layer_idx: str) -> torch.Tensor:
-    return torch.load(os.path.join(path, f"{layer_idx}_mlp.act_fn_mlp_activation_res_x_hat_labels.pt"))
+    return torch.load(os.path.join(path, f"{layer_idx}_mlp_input_x_hat_labels.pt"))
 
-def get_data(samples_to_learn, layer_idx=12):
+def get_data(samples_to_learn, layer_idx=0):
     recorded_inputs_path = '/root/autodl-tmp/mlp_activation/Llama-2-7b-chat-hf/piqa'
     query = load_recorded_input_data(recorded_inputs_path, layer_idx).float()
     label = load_recorded_input_data(recorded_inputs_path, layer_idx).float()
@@ -85,7 +85,7 @@ def main():
     parser.add_argument(
         "--L",
         type=int,
-        default=12,
+        default=0,
         help="which layer",
     )
     parser.add_argument(

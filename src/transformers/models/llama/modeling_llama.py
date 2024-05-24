@@ -211,7 +211,7 @@ def apply_rotary_pos_emb(q, k, cos, sin, position_ids=None, unsqueeze_dim=1):
 
 
 class LlamaMLP(nn.Module):
-    def __init__(self, config):
+    def __init__(self, config, layer_idx):
         super().__init__()
         self.config = config
         self.hidden_size = config.hidden_size
@@ -220,9 +220,35 @@ class LlamaMLP(nn.Module):
         self.up_proj = nn.Linear(self.hidden_size, self.intermediate_size, bias=False)
         self.down_proj = nn.Linear(self.intermediate_size, self.hidden_size, bias=False)
         self.act_fn = ACT2FN[config.hidden_act]
+        self.enable_precompute = False
+        self.layer_idx = layer_idx
+        self.saved_precompute_result_dir = '/root/autodl-tmp/mlp_activation/Llama-2-7b-chat-hf/piqa'
 
     def forward(self, x):
-        if self.config.pretraining_tp > 1:
+        if self.enable_precompute:
+            import os
+            predictor = torch.nn.Sequential(
+                torch.nn.Linear(self.hidden_size, 1000, bias=None, dtype=torch.float32),
+                torch.nn.SiLU(),
+                torch.nn.Linear(1000, self.hidden_size, bias=None, dtype=torch.float32),
+            )
+
+            predictor.load_state_dict(torch.load('/root/autodl-tmp/predictors/x-hat-predictor/model.pt'))
+            predictor.cuda()
+            c_matrix = torch.load(os.path.join(self.saved_precompute_result_dir, f'{self.layer_idx}_mlp_c_matrix_labels.pt')).float().cuda()
+            predictor.eval()
+            result_precomputed = predictor(x.float()) * c_matrix
+            rest_neural_indices = torch.load(os.path.join(self.saved_precompute_result_dir, f'{self.layer_idx}_mlp_rest_neural_indices_labels.pt'))
+            gate_proj_rest = self.gate_proj.weight.transpose(0, 1)[:, rest_neural_indices]
+            up_proj_rest = self.up_proj.weight.transpose(0, 1)[:, rest_neural_indices]
+            down_proj_rest = self.down_proj.weight.transpose(0, 1)[rest_neural_indices, :]
+            rest = torch.matmul(self.act_fn(torch.matmul(x, gate_proj_rest)) * torch.matmul(x, up_proj_rest), down_proj_rest)
+            actual = self.down_proj(self.act_fn(self.gate_proj(x)) * self.up_proj(x))
+            precomputed = (rest + result_precomputed).half()
+            loss = torch.nn.MSELoss()
+            print(loss(precomputed, actual))
+            return actual
+        elif self.config.pretraining_tp > 1:
             slice = self.intermediate_size // self.config.pretraining_tp
             gate_proj_slices = self.gate_proj.weight.split(slice, dim=0)
             up_proj_slices = self.up_proj.weight.split(slice, dim=0)
@@ -701,7 +727,7 @@ class LlamaDecoderLayer(nn.Module):
 
         self.self_attn = LLAMA_ATTENTION_CLASSES[config._attn_implementation](config=config, layer_idx=layer_idx)
 
-        self.mlp = LlamaMLP(config)
+        self.mlp = LlamaMLP(config, layer_idx)
         self.input_layernorm = LlamaRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         self.post_attention_layernorm = LlamaRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
 
@@ -927,7 +953,7 @@ class LlamaModel(LlamaPreTrainedModel):
         self.layers = nn.ModuleList(
             [LlamaDecoderLayer(config, layer_idx) for layer_idx in range(config.num_hidden_layers)]
         )
-        class act_linear(nn.Module):
+        class act_linear_approximation(nn.Module):
             def forward(self, input: torch.Tensor) -> torch.Tensor:
                 range_min = -0.5
                 range_max = 0.5
@@ -940,10 +966,11 @@ class LlamaModel(LlamaPreTrainedModel):
                 return (input * (r1 * r2)) * 0.5238 + nn.SiLU()(input * (r3 + r4))
                 
                 # return 0.5238 * input if input > -0.5 and input < 0.5 else nn.SiLU()(input)
-        for layer in self.layers:
-            layer.mlp.act_fn = act_linear()
+        # for layer in self.layers:
+        #     layer.mlp.act_fn = act_linear_approximation()
             
-        # self.layers[0].mlp.act_fn = act_linear()
+        # self.layers[0].mlp.act_fn = act_linear_approximation()
+        self.layers[0].mlp.enable_precompute = True
 
         self.norm = LlamaRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         self.gradient_checkpointing = False

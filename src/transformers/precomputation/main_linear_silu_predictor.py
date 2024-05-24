@@ -56,21 +56,15 @@ def silu(x_elem, theda = 1.0):
 def load_recorded_act(path: str, layer_idx: str) -> torch.Tensor:
     return torch.load(os.path.join(path, f"{layer_idx}_mlp.act_fn_mlp_activation_input.pt"))
 
-def get_data(samples_to_learn, range_min=-0.5, range_max=0.5):
+def get_data(samples_to_learn, range_min=-0.5, range_max=0.5, layer_idx=0):
     activation_recorded_res_path = '/root/autodl-tmp/mlp_activation/Llama-2-7b-chat-hf/piqa'
-    query = load_recorded_act(activation_recorded_res_path, 0).reshape(-1, 1)[:samples_to_learn].float()
+    query = load_recorded_act(activation_recorded_res_path, layer_idx).reshape(-1, 1)[:samples_to_learn].float()
+    mask = (query <= range_max) * (query >= range_min)
+    indices = torch.nonzero(mask)
+    query = query[indices]
     silu = nn.SiLU()
     label = silu(query)
     return query, label
-    
-    # query = []
-    # label = []
-    # for _ in range(samples_to_learn):
-    #     x = random.uniform(range_min, range_max)
-    #     y = silu(x)
-    #     query.append(float(x))
-    #     label.append(float(y))
-    # return torch.tensor(query).unsqueeze(-1), torch.tensor(label).unsqueeze(-1)
 
 def create_dataset(query, labels, args):
 
@@ -92,7 +86,7 @@ def create_dataset(query, labels, args):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Silu Predictor")
+    parser = argparse.ArgumentParser(description="Linear Silu Predictor")
     parser.add_argument("--model", type=str, default="7b", choices = MODEL_CHOICES)
     parser.add_argument("--dataset", type=str, default="piqa", choices = DATA_CHOICES)
     parser.add_argument(
@@ -134,13 +128,12 @@ def main():
 
     device = "cuda:0" if torch.cuda.is_available() else "cpu"
 
-    query, labels = get_data(CONFIG['samples_to_learn'])
+    query, labels = get_data(CONFIG['samples_to_learn'], layer_idx=args.L)
 
     train_loader, test_loader = create_dataset(query, labels, args)
 
     query_layer = torch.nn.Sequential(
-        torch.nn.Linear(1, 1000, bias=None, dtype=torch.float32),
-        torch.nn.Linear(1000, 1, bias=None, dtype=torch.float32)
+        torch.nn.Linear(1, 1, bias=True, dtype=torch.float32)
     )
 
     print("Start Training")

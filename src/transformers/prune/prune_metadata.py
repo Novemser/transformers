@@ -39,9 +39,9 @@ class PruneMetadata:
                 from transformers.models.llama.modeling_llama import LlamaRMSNorm
                 subset = find_layers(layer, layers=[LlamaRMSNorm])
             elif self.record_mlp_activation or self.record_mlp_activation_input:
-                from transformers.activations import GELUActivation
+                # from transformers.activations import GELUActivation
                 # TODO: adapt for llama SiLU
-                subset = find_layers(layer, layers=[GELUActivation])
+                subset = find_layers(layer, layers=[nn.SiLU])
             elif self.record_mlp_input:
                 from transformers.models.llama.modeling_llama import LlamaMLP
                 subset = find_layers(layer, layers=[LlamaMLP])
