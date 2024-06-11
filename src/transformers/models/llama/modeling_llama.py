@@ -23,7 +23,7 @@ import math
 import warnings
 from typing import List, Optional, Tuple, Union
 
-from transformers.prune.prune_metadata import LlamaPruneMetadata
+from transformers.prune.instrumentation_context import LlamaInstrumentationContext
 import torch
 import torch.nn.functional as F
 import torch.utils.checkpoint
@@ -32,7 +32,7 @@ from torch.nn import BCEWithLogitsLoss, CrossEntropyLoss, MSELoss
 
 from ...activations import ACT2FN
 from ...cache_utils import Cache, DynamicCache, StaticCache
-from ...prune import PruneMetadata
+from ...prune import InstrumentationContext
 from ...modeling_attn_mask_utils import AttentionMaskConverter
 from ...modeling_outputs import (
     BaseModelOutputWithPast,
@@ -1183,10 +1183,10 @@ class LlamaForCausalLM(LlamaPreTrainedModel):
         self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
         # Initialize weights and apply final processing
         self.post_init()
-        self.prune_metadata.set_instrumented_layers(self.model.layers)
+        self.instrumentation_context.set_instrumented_layers(self.model.layers)
 
-    def initialize_prune_metadata(self, config):
-        self.prune_metadata = LlamaPruneMetadata(self, ACT2FN[config.hidden_act], config)
+    def initialize_instrumentation_context(self, config):
+        self.instrumentation_context = LlamaInstrumentationContext(self, ACT2FN[config.hidden_act], config)
 
     def get_input_embeddings(self):
         return self.model.embed_tokens

@@ -7,10 +7,11 @@ import os
 from transformers.utils import logging
 logger = logging.get_logger(__name__)
 
-# PruneMetadata is used to record the statistics during the forward pass of the model.
+# InstrumentationContext is used to record the statistics during the forward pass of the model.
 # It can also prune the model based on recorded statistics 
-class PruneMetadata:
+class InstrumentationContext:
     def __init__(self, model, config):
+        self.config = config
         self.all_wrapper_layers = []
         self.handles = []
         self.model = model
@@ -140,64 +141,57 @@ class PruneMetadata:
         return activation_infos
 
     def print_statistics(self, save_weight_importance=True):
-        logger.warn("[Statistics] Instrumented layers:")
-        if self.record_weight_wise_activation or \
-            self.analyze_layer_norm_affect or \
-                self.record_mlp_activation or \
-                     self.record_mlp_input or \
-                        self.record_mlp_activation_input:
-            for id, wrapper_layers in enumerate(self.all_wrapper_layers):
-                logger.warn(f" layer_id:{id}")
-                for name, wrapper_layer in wrapper_layers.items():
-                    logger.warn(f"  layer_name:{name}")
-                    if self.analyze_layer_norm_affect:
-                        numbers = wrapper_layer.sims
-                        average = sum(numbers) / len(numbers)
-                        logger.warn(f"    average cosine sim of layer norm: {average.item()}")
-                        continue
-                    elif self.record_mlp_activation:
-                        filename = f"{id}_{name}_mlp_activation_res.pt"
-                        if not os.path.exists(self.output_path):
-                            os.makedirs(self.output_path)
-                        torch.save(wrapper_layer.records, os.path.join(self.output_path, filename))
-                        continue
-                    elif self.record_mlp_activation_input:
-                        filename = f"{id}_{name}_mlp_activation_input.pt"
-                        if not os.path.exists(self.output_path):
-                            os.makedirs(self.output_path)
-                        torch.save(wrapper_layer.records, os.path.join(self.output_path, filename))
-                        continue
-                    elif self.record_mlp_input:
-                        filename = f"{id}_{name}_mlp_input_res.pt"
-                        if not os.path.exists(self.output_path):
-                            os.makedirs(self.output_path)
-                        torch.save(wrapper_layer.records, os.path.join(self.output_path, filename))
-                        continue
-                    logger.warn("    rows:", wrapper_layer.rows)
-                    logger.warn("    columns:", wrapper_layer.columns)
-                    logger.warn("    nsamples:", wrapper_layer.nsamples)
-                    logger.warn("    scaler_row.shape:", wrapper_layer.scaler_row.shape)
-                    weight_importance = wrapper_layer.get_weight_importance()
-                    logger.warn("    weight_importance.shape:", weight_importance.shape)
-                    if self.output_path is not None and save_weight_importance:
-                        if not os.path.exists(self.output_path):
-                            os.makedirs(self.output_path)
-                        filename = f"{id}_{name}.pt"
-                        torch.save(weight_importance, os.path.join(self.output_path, filename))
-                        
         if self.enable_weight_activation_based_pruning:
             logger.warn(f"{(100 * self.num_weights_pruned / self.total_num_weights):.2f}" +
                         "% weights in the entire model are pruned.")
+
+        if not self.config.should_instrument_model():
+            return
+        
+        logger.warn("[Instrumentation Statistics] Instrumented layers:")
+        for id, wrapper_layers in enumerate(self.all_wrapper_layers):
+            logger.warn(f" layer_id:{id}")
+            for name, wrapper_layer in wrapper_layers.items():
+                logger.warn(f"  layer_name:{name}")
+                if self.analyze_layer_norm_affect:
+                    numbers = wrapper_layer.sims
+                    average = sum(numbers) / len(numbers)
+                    logger.warn(f"    average cosine sim of layer norm: {average.item()}")
+                    continue
+                elif self.record_mlp_activation:
+                    filename = f"{id}_{name}_activation_output.pt"
+                    if not os.path.exists(self.output_path):
+                        os.makedirs(self.output_path)
+                    torch.save(wrapper_layer.records, os.path.join(self.output_path, filename))
+                    continue
+                elif self.record_mlp_input:
+                    filename = f"{id}_{name}_mlp_input.pt"
+                    if not os.path.exists(self.output_path):
+                        os.makedirs(self.output_path)
+                    torch.save(wrapper_layer.records, os.path.join(self.output_path, filename))
+                    continue
+                logger.warn("    rows:", wrapper_layer.rows)
+                logger.warn("    columns:", wrapper_layer.columns)
+                logger.warn("    nsamples:", wrapper_layer.nsamples)
+                logger.warn("    scaler_row.shape:", wrapper_layer.scaler_row.shape)
+                weight_importance = wrapper_layer.get_weight_importance()
+                logger.warn("    weight_importance.shape:", weight_importance.shape)
+                if self.output_path is not None and save_weight_importance:
+                    if not os.path.exists(self.output_path):
+                        os.makedirs(self.output_path)
+                    filename = f"{id}_{name}.pt"
+                    torch.save(weight_importance, os.path.join(self.output_path, filename))
+                        
            
 
-class BloomPruneMetadata(PruneMetadata):
+class BloomInstrumentationContext(InstrumentationContext):
     def __init__(self, model, config):
         super().__init__(model, config)
         
     def create_wrapper_layer(self, layer, layer_id, layer_name):
         return BloomWrapperLayer(layer, layer_id, layer_name)
 
-class LlamaPruneMetadata(PruneMetadata):
+class LlamaInstrumentationContext(InstrumentationContext):
     def __init__(self, model, activation_func, config):
         super().__init__(model, config)
         self.activation_func = activation_func
