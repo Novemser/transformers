@@ -99,7 +99,6 @@ from .utils.import_utils import (
     is_torchdynamo_compiling,
 )
 from .utils.quantization_config import BitsAndBytesConfig, QuantizationMethod
-from transformers.prune import prune_metadata
 
 XLA_USE_BF16 = os.environ.get("XLA_USE_BF16", "0").upper()
 XLA_DOWNCAST_BF16 = os.environ.get("XLA_DOWNCAST_BF16", "0").upper()
@@ -1319,10 +1318,10 @@ class PreTrainedModel(nn.Module, ModuleUtilsMixin, GenerationMixin, PushToHubMix
         # when a different component (e.g. language_model) is used.
         self._keep_in_fp32_modules = copy.copy(self.__class__._keep_in_fp32_modules)
 
-        self.initialize_prune_metadata(config)
+        self.initialize_instrumentation_context(config)
 
     # NOTICE: Default metadata dose not consider activation function, overwrite with model-specific pruning metadata (e.g., to include activation function information)
-    def initialize_prune_metadata(self, config):
+    def initialize_instrumentation_context(self, config):
         pass
 
     def post_init(self):
