@@ -8,6 +8,8 @@ from torch.utils.data import DataLoader
 from trainer_mlp_scaler import train
 import random
 from torch import nn
+from transformers import AutoModelForCausalLM
+from transformers.activations import GELUActivation
 
 
 MODEL_CHOICES = ['7b']
@@ -16,9 +18,20 @@ CONFIG = {
     'num_layer': 32,
     'd_model': 4096,
     'intermediate': 11008,
-    'samples_to_learn': 500000,
+    'samples_to_learn': 30000,
     'samples_per_file': 50000
 }
+
+def init_model(ckpt_name: str='tiiuae/falcon-7b'):
+    return AutoModelForCausalLM.from_pretrained(ckpt_name, torch_dtype="auto", device_map="auto").cuda()
+
+def load_recorded_mpl_input(path: str, layer_idx: str) -> torch.Tensor:
+    return torch.load(os.path.join(path, f"{layer_idx}_mlp_mlp_input.pt")).cuda().bfloat16()
+
+def get_mlp_and_act_inputs(model, layer_idx, recorded_mpl_input_path='/root/autodl-tmp/instrumentation_output_dir/falcon-7b/piqa') -> torch.Tensor:
+    recorded_mpl_input = load_recorded_mpl_input(recorded_mpl_input_path, layer_idx)
+    with torch.no_grad():
+        return recorded_mpl_input.cpu().float(), model.transformer.h[layer_idx].mlp.dense_h_to_4h(recorded_mpl_input.cuda()).cpu().float()
 
 class BasicDataset(Dataset):
     def __init__(self, X, Y, n, train):
@@ -41,25 +54,24 @@ class BasicDataset(Dataset):
             print("all zero y")
             exit()
         return x, y
-    
-def sigmoid(x_elem):
-  return 1/(1 + np.exp(-x_elem))
-
-def silu(x_elem, theda = 1.0):
-    return x_elem * sigmoid(theda *x_elem)
-
-def load_recorded_act(path: str, layer_idx: str) -> torch.Tensor:
-    return torch.load(os.path.join(path, f"{layer_idx}_mlp.act_fn_mlp_activation_input.pt"))
 
 def get_data(samples_to_learn, range_min=-0.5, range_max=0.5, layer_idx=0):
-    activation_recorded_res_path = '/root/autodl-tmp/mlp_activation/Llama-2-7b-chat-hf/piqa'
-    query = load_recorded_act(activation_recorded_res_path, layer_idx).reshape(-1, 1)[:samples_to_learn].float()
-    mask = (query <= range_max) * (query >= range_min)
-    indices = torch.nonzero(mask)
-    query = query[indices]
-    silu = nn.SiLU()
-    label = silu(query)
-    return query, label
+    # 方案1. 自己生成某个range的数据
+    query = torch.FloatTensor(samples_to_learn, CONFIG["intermediate"]).uniform_(range_min, range_max).cuda()
+    act_fun = GELUActivation()
+    return query, act_fun(query)
+    # 方案2. 根据记录的mlp数据，算某个linear range的数据
+    # model = init_model()
+    # model.eval()
+    # act_fun = GELUActivation()
+    # _, act_inputs = get_mlp_and_act_inputs(model=model, layer_idx=layer_idx)
+    # act_inputs = act_inputs[:samples_to_learn,:].float().cuda()
+    # mask = ((act_inputs >= range_min) * (act_inputs < range_max))
+    # act_inputs = act_inputs * mask
+    # for act_input in act_inputs:
+    #     act_input
+    # act_inputs = act_inputs[(act_inputs * mask).nonzero()]
+    # return act_inputs, act_fun(act_inputs)
 
 def create_dataset(query, labels, args):
 
@@ -87,25 +99,25 @@ def main():
     parser.add_argument(
         "--L",
         type=int,
-        default=0,
+        default=9,
         help="which layer",
     )
     parser.add_argument(
         "--D",
         type=int,
-        default=1000,
+        default=100,
         help="low rank dimension",
     )
     parser.add_argument(
         "--batch_size",
         type=int,
-        default=640,
+        default=8,
         help="batch size",
     )
     parser.add_argument(
         "--epochs",
         type=int,
-        default=5,
+        default=500,
         help="epochs",
     )
     parser.add_argument(
@@ -123,12 +135,13 @@ def main():
 
     device = "cuda:0" if torch.cuda.is_available() else "cpu"
 
-    query, labels = get_data(CONFIG['samples_to_learn'], layer_idx=args.L)
+    query, labels = get_data(CONFIG['samples_to_learn'], layer_idx=args.L, range_min=-0.75, range_max=-0.5)
 
     train_loader, test_loader = create_dataset(query, labels, args)
 
     query_layer = torch.nn.Sequential(
-        torch.nn.Linear(1, 1, bias=True, dtype=torch.float32)
+        torch.nn.Linear(CONFIG["intermediate"], args.D, bias=True, dtype=torch.float32),
+        torch.nn.Linear(args.D, CONFIG["intermediate"], bias=True, dtype=torch.float32)
     )
 
     print("Start Training")
