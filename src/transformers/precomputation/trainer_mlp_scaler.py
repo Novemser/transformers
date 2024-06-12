@@ -20,8 +20,6 @@ def evaluate(model, device, loader, args, smalltest=False, loss_fn=nn.MSELoss())
     with torch.no_grad():
         for batch_idx, batch in enumerate((loader)):
             x, y = batch
-            y = y.to(device).nan_to_num(nan=0.0, posinf=100.0, neginf=-100.0)
-            assert y.isnan().sum() == 0 and y.isinf().sum() == 0
             y_pred = model(x.float().to(device))
 
             eval["Loss"] += [
@@ -39,11 +37,7 @@ def evaluate(model, device, loader, args, smalltest=False, loss_fn=nn.MSELoss())
 def train(model, train_loader, valid_loader, args, device, verbal=True):
     writer = SummaryWriter()
     
-    num_val = 0
     early_stop_waiting = 5
-    val_inter = len(train_loader) // (num_val + 1) + 1
-    num_print = 0
-    print_inter = len(train_loader) // (num_print + 1) + 1
     model.to(device)
 
     optimizer = torch.optim.AdamW(model.parameters(), args.lr, weight_decay=0.01)
@@ -53,8 +47,8 @@ def train(model, train_loader, valid_loader, args, device, verbal=True):
     if verbal:
         print(f"[Start] {eval_print(eval_results)}")
 
-    # best_model = copy.deepcopy(model.state_dict())
-    # base_acc = eval_results["Recall"]
+    best_model = copy.deepcopy(model.state_dict())
+    base_loss = eval_results["Loss"]
     best_eval = eval_results
     no_improve = 0
     for e in range(args.epochs):
@@ -63,9 +57,6 @@ def train(model, train_loader, valid_loader, args, device, verbal=True):
             x, y = batch
             optimizer.zero_grad()
 
-            # not sure if this is correct
-            y = y.to(device).nan_to_num(nan=0.0, posinf=100.0, neginf=-100.0)
-            assert y.isnan().sum() == 0 and y.isinf().sum() == 0
             y_pred = model(x.float().to(device))
             loss = loss_fn(y_pred, y)
             loss.backward()
@@ -82,17 +73,17 @@ def train(model, train_loader, valid_loader, args, device, verbal=True):
         writer.add_scalar("Loss/eval", epoch_eval_results["Loss"], e)
         writer.flush()
 
-        # if epoch_eval_results["Recall"] > base_acc:
-        #     base_acc = epoch_eval_results["Recall"]
-        #     best_eval = epoch_eval_results
-        #     model.cpu()
-        #     best_model = copy.deepcopy(model.state_dict())
-        #     model.to(device)
-        #     no_improve = 0
-        # else:
-        #     no_improve += 1
+        if epoch_eval_results["Loss"] < base_loss:
+            base_loss = epoch_eval_results["Loss"]
+            best_eval = epoch_eval_results
+            model.cpu()
+            best_model = copy.deepcopy(model.state_dict())
+            model.to(device)
+            no_improve = 0
+        else:
+            no_improve += 1
 
-        # if no_improve >= early_stop_waiting or base_acc > 0.99:
-        #     break
+        if no_improve >= early_stop_waiting or base_loss <= 1e-6:
+            break
     writer.close()
-    return copy.deepcopy(model.state_dict()), best_eval
+    return best_model, best_eval
