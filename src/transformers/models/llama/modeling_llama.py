@@ -970,7 +970,7 @@ class LlamaModel(LlamaPreTrainedModel):
         #     layer.mlp.act_fn = act_linear_approximation()
             
         # self.layers[0].mlp.act_fn = act_linear_approximation()
-        self.layers[0].mlp.enable_precompute = True
+        # self.layers[0].mlp.enable_precompute = True
 
         self.norm = LlamaRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         self.gradient_checkpointing = False

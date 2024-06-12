@@ -17,7 +17,7 @@
 import math
 import warnings
 from typing import TYPE_CHECKING, Optional, Tuple, Union
-from transformers.prune.prune_metadata import PruneMetadata
+from transformers.prune.instrumentation_context import InstrumentationContext
 
 import torch
 import torch.utils.checkpoint
@@ -1200,10 +1200,10 @@ class FalconForCausalLM(FalconPreTrainedModel):
 
         # Initialize weights and apply final processing
         self.post_init()
-        self.prune_metadata.set_instrumented_layers(self.transformer.h)
+        self.instrumentation_context.set_instrumented_layers(self.transformer.h)
 
-    def initialize_prune_metadata(self, config):
-        self.prune_metadata = PruneMetadata(self, config)
+    def initialize_instrumentation_context(self, config):
+        self.instrumentation_context = InstrumentationContext(self, config)
 
     def get_output_embeddings(self):
         return self.lm_head
