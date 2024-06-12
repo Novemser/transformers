@@ -745,10 +745,41 @@ class FalconMLP(nn.Module):
         self.act = get_activation(config.activation)
         self.dense_4h_to_h = FalconLinear(config.ffn_hidden_size, hidden_size, bias=config.bias)
         self.hidden_dropout = config.hidden_dropout
+        self.enable_precompute = False
+        self.pre_compute_linear_range = (-0.75, -0.5)
+        self.config = config
+        self.compare_loss = False
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = self.act(self.dense_h_to_4h(x))
-        x = self.dense_4h_to_h(x)
+        if self.enable_precompute:
+            linear_gelu_path = '/root/autodl-tmp/predictors/linear-gelu-predictor/model_range_-0.75_-0.5.pt'
+            
+            query_layer = torch.nn.Sequential(
+                torch.nn.Linear(self.config.ffn_hidden_size, 100, bias=True, dtype=torch.float32),
+                torch.nn.Linear(100, self.config.ffn_hidden_size, bias=True, dtype=torch.float32)
+            )
+            query_layer.load_state_dict(torch.load(linear_gelu_path))
+            query_layer.eval()
+            query_layer.to(x.device)
+            act_input = self.dense_h_to_4h(x)
+            # Neurals within linear range computed with approximated function
+            # Other neurals computes normally
+
+            mask = (act_input >= self.pre_compute_linear_range[0]) * (act_input < self.pre_compute_linear_range[1])
+            in_range_neurals = act_input * mask
+            out_range_neurals = act_input * (mask == False)
+            x_pre_compute = query_layer(in_range_neurals.float()).bfloat16() * mask + \
+                self.act(out_range_neurals) * (mask == False)
+            x_pre_compute = self.dense_4h_to_h(x_pre_compute)
+            if self.compare_loss:
+                x_actual = self.act(self.dense_h_to_4h(x))
+                x_actual = self.dense_4h_to_h(x_actual)
+                loss_fn = MSELoss()
+                print(f"Loss: {loss_fn(x_actual, x_pre_compute)}")
+            return x_pre_compute
+        else:
+            x = self.act(self.dense_h_to_4h(x))
+            x = self.dense_4h_to_h(x)
         return x
 
 
@@ -1001,6 +1032,9 @@ class FalconModel(FalconPreTrainedModel):
 
         # Initialize weights and apply final processing
         self.post_init()
+
+        # layer_idx = 9
+        # self.h[layer_idx].mlp.enable_precompute = True
 
     def get_input_embeddings(self):
         return self.word_embeddings

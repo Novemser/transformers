@@ -16,8 +16,8 @@ MODEL_CHOICES = ['7b']
 DATA_CHOICES = ['piqa']
 CONFIG = {
     'num_layer': 32,
-    'd_model': 4096,
-    'intermediate': 11008,
+    'd_model': 4544,
+    'intermediate': 18176,
     'samples_to_learn': 30000,
     'samples_per_file': 50000
 }
@@ -134,8 +134,9 @@ def main():
     np.random.seed(0)
 
     device = "cuda:0" if torch.cuda.is_available() else "cpu"
+    range_to_learn = (-0.75, -0.5)
 
-    query, labels = get_data(CONFIG['samples_to_learn'], layer_idx=args.L, range_min=-0.75, range_max=-0.5)
+    query, labels = get_data(CONFIG['samples_to_learn'], layer_idx=args.L, range_min=range_to_learn[0], range_max=range_to_learn[1])
 
     train_loader, test_loader = create_dataset(query, labels, args)
 
@@ -150,7 +151,7 @@ def main():
     )
 
     dir = f"/root/autodl-tmp/predictors/linear-gelu-predictor"
-    file = f"model.pt"
+    file = f"model_range_{range_to_learn[0]}_{range_to_learn[1]}.pt"
     if not os.path.exists(dir):
         os.makedirs(dir)
     torch.save(best_model, os.path.join(dir, file))
