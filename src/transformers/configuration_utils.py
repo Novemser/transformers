@@ -386,11 +386,12 @@ class PretrainedConfig(PushToHubMixin):
         self.record_mlp_input = kwargs.pop("record_mlp_input", False)
 
     def should_instrument_model(self) -> bool:
-        return self.enable_weight_activation_based_pruning and \
-            self.record_weight_wise_activation and \
-                self.analyze_layer_norm_affect and \
-                    self.record_mlp_activation and \
-                        self.record_mlp_input
+        return self.enable_weight_activation_based_pruning or \
+            self.record_weight_wise_activation or \
+                self.analyze_layer_norm_affect or \
+                    self.record_mlp_activation or \
+                         self.record_mlp_input or \
+              self.record_mlp_activation_input
 
     @property
     def name_or_path(self) -> str:
