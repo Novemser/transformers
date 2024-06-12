@@ -40,12 +40,12 @@ class InstrumentationContext:
                 from transformers.models.llama.modeling_llama import LlamaRMSNorm
                 subset = find_layers(layer, layers=[LlamaRMSNorm])
             elif self.record_mlp_activation or self.record_mlp_activation_input:
-                # from transformers.activations import GELUActivation
-                # TODO: adapt for llama SiLU
-                subset = find_layers(layer, layers=[nn.SiLU])
+                from transformers.activations import GELUActivation
+                subset = find_layers(layer, layers=[nn.SiLU, GELUActivation])
             elif self.record_mlp_input:
                 from transformers.models.llama.modeling_llama import LlamaMLP
-                subset = find_layers(layer, layers=[LlamaMLP])
+                from transformers.models.falcon.modeling_falcon import FalconMLP
+                subset = find_layers(layer, layers=[LlamaMLP, FalconMLP])
             else:
                 subset = find_layers(layer)
         
