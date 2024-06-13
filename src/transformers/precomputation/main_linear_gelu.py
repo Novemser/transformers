@@ -136,11 +136,12 @@ def main():
     np.random.seed(0)
 
     device = "cuda:0" if torch.cuda.is_available() else "cpu"
-    step = 0.25
+    step = 1.5
     start = -3
-    end = 3
+    end = 0
     for range_to_learn in tqdm(gen_range_by_step(start, end, step), desc=f"Training linear GELU with ({start},{end},{step})"):
         # range_to_learn = (-0.75, -0.5)
+        print(f"Training Range {range_to_learn}")
         query, labels = get_data(CONFIG['samples_to_learn'], layer_idx=args.L, range_min=range_to_learn[0], range_max=range_to_learn[1])
 
         train_loader, test_loader = create_dataset(query, labels, args)

@@ -751,8 +751,15 @@ class FalconMLP(nn.Module):
         self.config = config
         self.compare_loss = False
         self.query_layers = None
-            
+        self.prune_less_than_zero_neurals = False
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        if self.prune_less_than_zero_neurals:
+            x = self.dense_h_to_4h(x)
+            x = x * (x > 0)
+            x = self.act(x)
+            x = self.dense_4h_to_h(x)
+            return x
         if self.enable_precompute:
             act_input = self.dense_h_to_4h(x)
             # Neurals within linear range computed with approximated function
@@ -1031,12 +1038,12 @@ class FalconModel(FalconPreTrainedModel):
 
         self.pre_compute_linear_ranges = None
         self.query_layers = None
-        self.enable_pre_compute = True
+        self.enable_pre_compute = False
 
     def init_pre_compute(self):
         # layer_idx = 9
         # self.h[layer_idx].mlp.enable_precompute = True
-        self.pre_compute_linear_ranges = gen_range_by_step(-3, 3, 0.25)
+        self.pre_compute_linear_ranges = gen_range_by_step(-3, 0, 1.5)
         self.init_linear_predictor(self.pre_compute_linear_ranges)
         self.inject_query_layers(self.pre_compute_linear_ranges)
 
@@ -1044,6 +1051,7 @@ class FalconModel(FalconPreTrainedModel):
         for layer in self.h:
             layer.mlp.query_layers = self.query_layers
             layer.mlp.pre_compute_linear_ranges = linear_ranges
+            layer.mlp.enable_precompute = True
 
     def init_linear_predictor(self, pre_compute_linear_ranges, device='cuda:0'):
         self.query_layers = nn.ModuleList()
