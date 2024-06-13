@@ -103,6 +103,15 @@ def prune_by_column_importances(
         reverse_order=False) -> torch.tensor:
     pass
 
+def gen_range_by_step(start, end, step):
+    idx = float(start)
+    res = []
+    while True:
+        res.append((idx, idx + step))
+        idx += step
+        if idx >= end:
+            break
+    return res
 
 PRUNING_FUNC_MAP = {
     'weight': prune_by_weight_importances,

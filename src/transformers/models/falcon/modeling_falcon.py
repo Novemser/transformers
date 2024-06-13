@@ -18,6 +18,7 @@ import math
 import warnings
 from typing import TYPE_CHECKING, Optional, Tuple, Union
 from transformers.prune.instrumentation_context import InstrumentationContext
+from transformers.prune.sparsity_util import gen_range_by_step
 
 import torch
 import torch.utils.checkpoint
@@ -745,38 +746,33 @@ class FalconMLP(nn.Module):
         self.act = get_activation(config.activation)
         self.dense_4h_to_h = FalconLinear(config.ffn_hidden_size, hidden_size, bias=config.bias)
         self.hidden_dropout = config.hidden_dropout
-        self.enable_precompute = False
-        self.pre_compute_linear_range = (-0.75, -0.5)
+        self.enable_precompute = True
+        self.pre_compute_linear_ranges = None
         self.config = config
         self.compare_loss = False
-
+        self.query_layers = None
+            
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         if self.enable_precompute:
-            linear_gelu_path = '/root/autodl-tmp/predictors/linear-gelu-predictor/model_range_-0.75_-0.5.pt'
-            
-            query_layer = torch.nn.Sequential(
-                torch.nn.Linear(self.config.ffn_hidden_size, 100, bias=True, dtype=torch.float32),
-                torch.nn.Linear(100, self.config.ffn_hidden_size, bias=True, dtype=torch.float32)
-            )
-            query_layer.load_state_dict(torch.load(linear_gelu_path))
-            query_layer.eval()
-            query_layer.to(x.device)
             act_input = self.dense_h_to_4h(x)
             # Neurals within linear range computed with approximated function
             # Other neurals computes normally
-
-            mask = (act_input >= self.pre_compute_linear_range[0]) * (act_input < self.pre_compute_linear_range[1])
-            in_range_neurals = act_input * mask
-            out_range_neurals = act_input * (mask == False)
-            x_pre_compute = query_layer(in_range_neurals.float()).bfloat16() * mask + \
-                self.act(out_range_neurals) * (mask == False)
-            x_pre_compute = self.dense_4h_to_h(x_pre_compute)
-            if self.compare_loss:
-                x_actual = self.act(self.dense_h_to_4h(x))
-                x_actual = self.dense_4h_to_h(x_actual)
-                loss_fn = MSELoss()
-                print(f"Loss: {loss_fn(x_actual, x_pre_compute)}")
-            return x_pre_compute
+            in_range_masks = None
+            x_pre_compute_total = 0
+            for range_idx, pre_compute_linear_range in enumerate(self.pre_compute_linear_ranges):
+                mask = (act_input >= pre_compute_linear_range[0]) * (act_input < pre_compute_linear_range[1])
+                in_range_neurals = act_input * mask
+                in_range_masks = mask if in_range_masks == None else mask + in_range_masks
+                x_pre_compute = self.query_layers[range_idx](in_range_neurals.float()).bfloat16() * mask
+                x_pre_compute = self.dense_4h_to_h(x_pre_compute)
+                if self.compare_loss:
+                    x_actual = self.act(self.dense_h_to_4h(x))
+                    x_actual = self.dense_4h_to_h(x_actual)
+                    loss_fn = MSELoss()
+                    print(f"Loss: {loss_fn(x_actual, x_pre_compute)}")
+                x_pre_compute_total += x_pre_compute
+            out_range_masks = (in_range_masks == False)
+            return x_pre_compute_total + self.dense_4h_to_h(self.act(act_input * out_range_masks))
         else:
             x = self.act(self.dense_h_to_4h(x))
             x = self.dense_4h_to_h(x)
@@ -1033,8 +1029,37 @@ class FalconModel(FalconPreTrainedModel):
         # Initialize weights and apply final processing
         self.post_init()
 
+        self.pre_compute_linear_ranges = None
+        self.query_layers = None
+        self.enable_pre_compute = True
+
+    def init_pre_compute(self):
         # layer_idx = 9
         # self.h[layer_idx].mlp.enable_precompute = True
+        self.pre_compute_linear_ranges = gen_range_by_step(-3, 3, 0.25)
+        self.init_linear_predictor(self.pre_compute_linear_ranges)
+        self.inject_query_layers(self.pre_compute_linear_ranges)
+
+    def inject_query_layers(self, linear_ranges):
+        for layer in self.h:
+            layer.mlp.query_layers = self.query_layers
+            layer.mlp.pre_compute_linear_ranges = linear_ranges
+
+    def init_linear_predictor(self, pre_compute_linear_ranges, device='cuda:0'):
+        self.query_layers = nn.ModuleList()
+        for pre_compute_linear_range in pre_compute_linear_ranges:
+            linear_gelu_path = f'/root/autodl-tmp/predictors/linear-gelu-predictor/model_range_{pre_compute_linear_range[0]}_{pre_compute_linear_range[1]}.pt'
+            query_layer = torch.nn.Sequential(
+                torch.nn.Linear(self.config.ffn_hidden_size, 100, bias=True, dtype=torch.float32),
+                torch.nn.Linear(100, self.config.ffn_hidden_size, bias=True, dtype=torch.float32)
+            )
+            state_dict = torch.load(linear_gelu_path)
+            if state_dict == None:
+                raise RuntimeError(f"{linear_gelu_path} is invalid!")
+            query_layer.load_state_dict(state_dict)
+            query_layer.eval()
+            query_layer.to(device)
+            self.query_layers.append(query_layer)
 
     def get_input_embeddings(self):
         return self.word_embeddings
@@ -1061,6 +1086,8 @@ class FalconModel(FalconPreTrainedModel):
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
     ) -> Union[Tuple[torch.Tensor, ...], BaseModelOutputWithPastAndCrossAttentions]:
+        if self.enable_pre_compute:
+            self.init_pre_compute()
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
         output_hidden_states = (
             output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states

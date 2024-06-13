@@ -10,6 +10,8 @@ import random
 from torch import nn
 from transformers import AutoModelForCausalLM
 from transformers.activations import GELUActivation
+from transformers.prune.sparsity_util import gen_range_by_step
+from tqdm import tqdm
 
 
 MODEL_CHOICES = ['7b']
@@ -134,27 +136,30 @@ def main():
     np.random.seed(0)
 
     device = "cuda:0" if torch.cuda.is_available() else "cpu"
-    range_to_learn = (-0.75, -0.5)
+    step = 0.25
+    start = -3
+    end = 3
+    for range_to_learn in tqdm(gen_range_by_step(start, end, step), desc=f"Training linear GELU with ({start},{end},{step})"):
+        # range_to_learn = (-0.75, -0.5)
+        query, labels = get_data(CONFIG['samples_to_learn'], layer_idx=args.L, range_min=range_to_learn[0], range_max=range_to_learn[1])
 
-    query, labels = get_data(CONFIG['samples_to_learn'], layer_idx=args.L, range_min=range_to_learn[0], range_max=range_to_learn[1])
+        train_loader, test_loader = create_dataset(query, labels, args)
 
-    train_loader, test_loader = create_dataset(query, labels, args)
+        query_layer = torch.nn.Sequential(
+            torch.nn.Linear(CONFIG["intermediate"], args.D, bias=True, dtype=torch.float32),
+            torch.nn.Linear(args.D, CONFIG["intermediate"], bias=True, dtype=torch.float32)
+        )
 
-    query_layer = torch.nn.Sequential(
-        torch.nn.Linear(CONFIG["intermediate"], args.D, bias=True, dtype=torch.float32),
-        torch.nn.Linear(args.D, CONFIG["intermediate"], bias=True, dtype=torch.float32)
-    )
+        print("Start Training")
+        best_model, eval_result = train(
+            query_layer,  train_loader, test_loader, args, device, verbal=True
+        )
 
-    print("Start Training")
-    best_model, eval_result = train(
-        query_layer,  train_loader, test_loader, args, device, verbal=True
-    )
-
-    dir = f"/root/autodl-tmp/predictors/linear-gelu-predictor"
-    file = f"model_range_{range_to_learn[0]}_{range_to_learn[1]}.pt"
-    if not os.path.exists(dir):
-        os.makedirs(dir)
-    torch.save(best_model, os.path.join(dir, file))
+        dir = f"/root/autodl-tmp/predictors/linear-gelu-predictor"
+        file = f"model_range_{range_to_learn[0]}_{range_to_learn[1]}.pt"
+        if not os.path.exists(dir):
+            os.makedirs(dir)
+        torch.save(best_model, os.path.join(dir, file))
 
 if __name__ == "__main__":
     main()
