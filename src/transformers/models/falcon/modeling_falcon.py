@@ -1043,7 +1043,7 @@ class FalconModel(FalconPreTrainedModel):
     def init_pre_compute(self):
         # layer_idx = 9
         # self.h[layer_idx].mlp.enable_precompute = True
-        self.pre_compute_linear_ranges = gen_range_by_step(-3, 0, 1.5)
+        self.pre_compute_linear_ranges = gen_range_by_step(-3, 0, 1)
         self.init_linear_predictor(self.pre_compute_linear_ranges)
         self.inject_query_layers(self.pre_compute_linear_ranges)
 
